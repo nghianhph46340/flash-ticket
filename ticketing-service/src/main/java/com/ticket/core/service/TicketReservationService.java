@@ -56,7 +56,8 @@ public class TicketReservationService {
                 .build();
 
         try {
-            natsTicketEventPublisher.publishTicketReservedEvent(event);
+            // Chờ JetStream xác nhận (Ack) đã ghi tin nhắn an toàn vào WAL stream (thường < 5ms)
+            natsTicketEventPublisher.publishTicketReservedEvent(event).get(java.time.Duration.ofSeconds(5).toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS);
         } catch (Exception e) {
             // Cơ chế phòng thủ Saga: Nếu NATS publish văng lỗi, nhả lại ghế trên Redis ngay lập tức
             log.error("NATS publish failed for order {}. Triggering compensating rollback on Redis.", orderCode, e);

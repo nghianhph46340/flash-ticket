@@ -95,5 +95,12 @@ jobs:
 
       - name: Verify Binary Output
         run: |
-          ls -la ticketing-service/target/ticketing-service
+          ls -lh ticketing-service/target/ticketing-service
           file ticketing-service/target/ticketing-service
+
+      - name: Upload Native Binary Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ticketing-service-linux-x86_64
+          path: ticketing-service/target/ticketing-service
+          retention-days: 7

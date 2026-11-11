@@ -14,6 +14,7 @@ import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.annotation.DependsOn;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,7 +27,8 @@ import java.util.List;
 import java.util.UUID;
 
 @Slf4j
-@Component
+@Component("orderEventConsumer")
+@DependsOn("natsStreamInitializer")
 @RequiredArgsConstructor
 public class OrderEventConsumer {
 
@@ -51,18 +53,35 @@ public class OrderEventConsumer {
     public void startConsuming() {
         try {
             JetStream js = natsConnection.jetStream();
+            JetStreamManagement jsm = natsConnection.jetStreamManagement();
             dispatcher = natsConnection.createDispatcher();
+
+            String queueGroup = "ticket-order-group";
+            String consumerName = "ticket-order-worker";
+
+            // Kiểm tra và xóa consumer cũ nếu cấu hình deliverGroup không khớp để tránh lỗi [SUB-90016]
+            try {
+                io.nats.client.api.ConsumerInfo ci = jsm.getConsumerInfo("TICKETS", consumerName);
+                if (ci != null && (ci.getConsumerConfiguration().getDeliverGroup() == null ||
+                        !queueGroup.equals(ci.getConsumerConfiguration().getDeliverGroup()))) {
+                    log.warn("NATS consumer '{}' exists with incompatible deliverGroup. Recreating...", consumerName);
+                    jsm.deleteConsumer("TICKETS", consumerName);
+                }
+            } catch (Exception ignored) {
+                // Consumer chưa tồn tại
+            }
 
             PushSubscribeOptions options = PushSubscribeOptions.builder()
                     .stream("TICKETS")
-                    .durable("ticket-order-worker")
+                    .durable(consumerName)
+                    .deliverGroup(queueGroup)
                     .configuration(ConsumerConfiguration.builder()
                             .ackWait(Duration.ofSeconds(10))
                             .maxDeliver(3)
                             .build())
                     .build();
 
-            subscription = js.subscribe("tickets.reserved", dispatcher, msg -> {
+            subscription = js.subscribe("tickets.reserved", queueGroup, dispatcher, msg -> {
                 try {
                     handleTicketReserved(msg);
                 } catch (Exception e) {
@@ -71,9 +90,25 @@ public class OrderEventConsumer {
                 }
             }, false, options);
 
-            log.info("NATS JetStream OrderEventConsumer started listening on 'tickets.reserved'");
+            log.info("NATS JetStream OrderEventConsumer started listening on 'tickets.reserved' with queue group '{}'", queueGroup);
         } catch (Exception e) {
             log.error("Failed to start NATS OrderEventConsumer: {}", e.getMessage(), e);
+            throw new IllegalStateException("Failed to start NATS OrderEventConsumer", e);
+        }
+    }
+
+    @PreDestroy
+    public void stopConsuming() {
+        try {
+            if (subscription != null) {
+                subscription.unsubscribe();
+            }
+            if (dispatcher != null) {
+                natsConnection.closeDispatcher(dispatcher);
+            }
+            log.info("NATS JetStream OrderEventConsumer closed successfully.");
+        } catch (Exception e) {
+            log.warn("Error stopping NATS consumer: {}", e.getMessage());
         }
     }
 

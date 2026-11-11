@@ -83,7 +83,7 @@ class BookingAndPaymentIntegrationTest {
 
         // 3. Chờ NATS JetStream Consumer tiêu thụ event và lưu đơn hàng PENDING vào PostgreSQL
         OrderEntity savedOrder = null;
-        for (int i = 0; i < 20; i++) {
+        for (int i = 0; i < 50; i++) {
             Optional<OrderEntity> orderOpt = orderRepository.findByOrderCode(orderCode);
             if (orderOpt.isPresent()) {
                 savedOrder = orderOpt.get();

@@ -15,7 +15,7 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 
 @Slf4j
-@Component
+@Component("natsStreamInitializer")
 @RequiredArgsConstructor
 public class NatsStreamInitializer {
 
@@ -44,19 +44,34 @@ public class NatsStreamInitializer {
             }
 
             if (!exists) {
-                StreamConfiguration config = StreamConfiguration.builder()
-                        .name(streamName)
-                        .subjects(streamSubject)
-                        .storageType(StorageType.File)
-                        .retentionPolicy(RetentionPolicy.Limits)
-                        .duplicateWindow(Duration.ofMinutes(3))
-                        .build();
+                try {
+                    StreamConfiguration config = StreamConfiguration.builder()
+                            .name(streamName)
+                            .subjects(streamSubject)
+                            .storageType(StorageType.File)
+                            .retentionPolicy(RetentionPolicy.Limits)
+                            .duplicateWindow(Duration.ofMinutes(3))
+                            .build();
 
-                jsm.addStream(config);
-                log.info("Created NATS Stream '{}' with subject '{}' and deduplication window of 3m.", streamName, streamSubject);
+                    jsm.addStream(config);
+                    log.info("Created NATS Stream '{}' with subject '{}' (StorageType.File).", streamName, streamSubject);
+                } catch (Exception fileStorageEx) {
+                    log.warn("Failed to create stream with File storage ({}), falling back to Memory storage...", fileStorageEx.getMessage());
+                    StreamConfiguration memConfig = StreamConfiguration.builder()
+                            .name(streamName)
+                            .subjects(streamSubject)
+                            .storageType(StorageType.Memory)
+                            .retentionPolicy(RetentionPolicy.Limits)
+                            .duplicateWindow(Duration.ofMinutes(3))
+                            .build();
+
+                    jsm.addStream(memConfig);
+                    log.info("Created NATS Stream '{}' with subject '{}' (StorageType.Memory).", streamName, streamSubject);
+                }
             }
         } catch (Exception e) {
             log.error("Failed to initialize NATS JetStream stream '{}': {}", streamName, e.getMessage(), e);
+            throw new IllegalStateException("Cannot start ticketing-service without NATS JetStream initialized", e);
         }
     }
 }
