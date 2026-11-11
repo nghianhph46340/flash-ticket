@@ -1,0 +1,123 @@
+networks:
+  ticket-net:
+    driver: bridge
+
+services:
+  # 1. Cơ sở dữ liệu quan hệ lâu dài (Durable Source of Truth)
+  postgres:
+    image: docker.io/library/postgres:16-alpine
+    container_name: flashticket-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: flashticket_db
+      POSTGRES_USER: ticket_admin
+      POSTGRES_PASSWORD: secure_password_123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ticket_admin -d flashticket_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ticket-net
+
+  # 2. In-Memory Atomic Lock & Fast Cache (Tấm khiên phòng ngự Flash Sale)
+  redis:
+    image: docker.io/library/redis:7.2-alpine
+    container_name: flashticket-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - ticket-net
+
+  # 3. Cloud-Native Streaming Broker (NATS JetStream siêu nhẹ ~35MB RAM)
+  nats:
+    image: docker.io/library/nats:latest
+    container_name: flashticket-nats
+    restart: unless-stopped
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    ports:
+      - "4222:4222"   # Cổng kết nối client ứng dụng (jnats)
+      - "8222:8222"   # HTTP Monitoring Dashboard
+    volumes:
+      - nats_data:/data
+    networks:
+      - ticket-net
+
+  # 4. Mock Object Storage S3/Cloudflare R2 tại môi trường Dev
+  minio:
+    image: docker.io/cleanstart/minio:latest
+    container_name: flashticket-minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: minio_admin
+      MINIO_ROOT_PASSWORD: minio_password_123
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"   # S3 API endpoint
+      - "9001:9001"   # Web Console UI
+    volumes:
+      - minio_data:/data
+    networks:
+      - ticket-net
+
+  # 5. Backend REST & Realtime API (Spring Boot 3 / GraalVM)
+  ticketing-service:
+    build:
+      context: ./ticketing-service
+      dockerfile: Dockerfile
+    container_name: flashticket-backend
+    restart: unless-stopped
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: flashticket_db
+      DB_USER: ticket_admin
+      DB_PASSWORD: secure_password_123
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      NATS_URL: nats://nats:4222
+      PORT: 8080
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      nats:
+        condition: service_started
+    networks:
+      - ticket-net
+
+  # 6. Frontend Single Page Application (Vue 3 + Tailwind CSS + Nginx Alpine)
+  ticketing-frontend:
+    build:
+      context: ./ticketing-frontend
+      dockerfile: Dockerfile
+    container_name: flashticket-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      - ticketing-service
+    networks:
+      - ticket-net
+
+volumes:
+  postgres_data:
+  redis_data:
+  nats_data:
+  minio_data:

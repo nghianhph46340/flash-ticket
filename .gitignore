@@ -1,0 +1,62 @@
+# ==========================================
+# FlashTicket .gitignore
+# ==========================================
+
+# 1. SECURITY & KEYS (TUYỆT ĐỐI KHÔNG COMMIT)
+*.pem
+*.key
+*.p12
+*.jks
+vps_1.pem
+.env
+.env.*
+!.env.example
+
+# 2. JAVA & MAVEN ARTIFACTS
+target/
+*.class
+*.jar
+*.war
+*.nar
+*.ear
+*.zip
+*.tar.gz
+*.rar
+hs_err_pid*
+replay_pid*
+
+# 3. NODE & FRONTEND ARTIFACTS
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+dist/
+dist-ssr/
+*.local
+
+# 4. IDE & EDITORS
+.idea/
+*.iml
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.DS_Store
+Thumbs.db
+.project
+.classpath
+.factorypath
+.settings/
+
+
+# 5. LOGS & TEMPORARY FILES
+logs/
+*.log
+/tmp/
+.direnv/
+.codegraph/
+starter.zip

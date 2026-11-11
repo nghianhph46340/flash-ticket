@@ -1,0 +1,110 @@
+version: '3.8'
+
+networks:
+  ticket-net:
+    driver: bridge
+
+services:
+  # 1. Cơ sở dữ liệu quan hệ (PostgreSQL 16 Alpine)
+  postgres:
+    image: docker.io/library/postgres:16-alpine
+    container_name: flashticket-postgres
+    restart: always
+    environment:
+      POSTGRES_DB: flashticket_db
+      POSTGRES_USER: ticket_admin
+      POSTGRES_PASSWORD: secure_password_123
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data:Z
+    command: postgres -c shared_buffers=128MB -c max_connections=100 -c work_mem=4MB
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ticket_admin -d flashticket_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ticket-net
+
+  # 2. In-Memory Atomic Lock (Redis 7.2 Alpine)
+  redis:
+    image: docker.io/library/redis:7.2-alpine
+    container_name: flashticket-redis
+    restart: always
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "150mb", "--maxmemory-policy", "noeviction"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis_data:/data:Z
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - ticket-net
+
+  # 3. Message Streaming Broker (NATS JetStream)
+  nats:
+    image: docker.io/library/nats:latest
+    container_name: flashticket-nats
+    restart: always
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    ports:
+      - "127.0.0.1:4222:4222"
+      - "127.0.0.1:8222:8222"
+    volumes:
+      - nats_data:/data:Z
+    networks:
+      - ticket-net
+
+  # 4. Backend Core Service (Spring Boot 3.3 Layered JRE 21 Alpine)
+  ticketing-service:
+    image: localhost/flashticket-backend:latest
+    build:
+      context: ./ticketing-service
+      dockerfile: Dockerfile.prod
+    container_name: flashticket-backend
+    restart: always
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: flashticket_db
+      DB_USER: ticket_admin
+      DB_PASSWORD: secure_password_123
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      NATS_URL: nats://nats:4222
+      PORT: 8080
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      nats:
+        condition: service_started
+    networks:
+      - ticket-net
+
+  # 5. Frontend SPA & Reverse Proxy (Vue 3 + Nginx Alpine)
+  ticketing-frontend:
+    image: localhost/flashticket-frontend:latest
+    build:
+      context: ./ticketing-frontend
+      dockerfile: Dockerfile.prod
+    container_name: flashticket-frontend
+    restart: always
+    ports:
+      - "80:80"
+    depends_on:
+      - ticketing-service
+    networks:
+      - ticket-net
+
+volumes:
+  postgres_data:
+  redis_data:
+  nats_data:

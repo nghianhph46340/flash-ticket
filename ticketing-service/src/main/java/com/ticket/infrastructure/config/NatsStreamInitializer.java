@@ -1,0 +1,62 @@
+package com.ticket.infrastructure.config;
+
+import io.nats.client.Connection;
+import io.nats.client.JetStreamManagement;
+import io.nats.client.api.RetentionPolicy;
+import io.nats.client.api.StorageType;
+import io.nats.client.api.StreamConfiguration;
+import io.nats.client.api.StreamInfo;
+import jakarta.annotation.PostConstruct;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+
+import java.time.Duration;
+
+@Slf4j
+@Component
+@RequiredArgsConstructor
+public class NatsStreamInitializer {
+
+    private final Connection natsConnection;
+
+    @Value("${nats.stream.name:TICKETS}")
+    private String streamName;
+
+    @Value("${nats.stream.subject:tickets.*}")
+    private String streamSubject;
+
+    @PostConstruct
+    public void initStream() {
+        try {
+            JetStreamManagement jsm = natsConnection.jetStreamManagement();
+
+            boolean exists = false;
+            try {
+                StreamInfo info = jsm.getStreamInfo(streamName);
+                if (info != null) {
+                    exists = true;
+                    log.info("NATS Stream '{}' already exists with {} messages.", streamName, info.getStreamState().getMsgCount());
+                }
+            } catch (Exception ignored) {
+                // Stream chưa tồn tại
+            }
+
+            if (!exists) {
+                StreamConfiguration config = StreamConfiguration.builder()
+                        .name(streamName)
+                        .subjects(streamSubject)
+                        .storageType(StorageType.File)
+                        .retentionPolicy(RetentionPolicy.Limits)
+                        .duplicateWindow(Duration.ofMinutes(3))
+                        .build();
+
+                jsm.addStream(config);
+                log.info("Created NATS Stream '{}' with subject '{}' and deduplication window of 3m.", streamName, streamSubject);
+            }
+        } catch (Exception e) {
+            log.error("Failed to initialize NATS JetStream stream '{}': {}", streamName, e.getMessage(), e);
+        }
+    }
+}
