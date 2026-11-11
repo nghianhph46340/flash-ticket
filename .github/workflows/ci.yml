@@ -33,10 +33,20 @@ jobs:
           cache: 'maven'
 
       - name: Run Backend Tests
+        env:
+          DB_HOST: "127.0.0.1"
+          REDIS_HOST: "127.0.0.1"
+          NATS_URL: "nats://127.0.0.1:4222"
         run: |
           cd ticketing-service
           chmod +x mvnw
-          ./mvnw test -B || (echo "=== SUREFIRE TEST REPORTS ===" && cat target/surefire-reports/*.txt && exit 1)
+          ./mvnw test -B
+
+      - name: Report Test Results on Failure
+        if: failure()
+        run: |
+          echo "=== DUMPING SUREFIRE TEST REPORTS ==="
+          find ticketing-service/target/surefire-reports -type f -name "*.txt" -exec cat {} + || true
 
       - name: Set up Node.js 20
         uses: actions/setup-node@v4
