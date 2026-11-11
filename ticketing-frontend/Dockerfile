@@ -7,11 +7,11 @@ FROM node:24-alpine AS build-stage
 WORKDIR /app
 
 # Kích hoạt corepack để dùng pnpm
-RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN corepack enable && corepack prepare pnpm@10.9.0 --activate
 
 # Copy package.json và pnpm-lock.yaml để cache layers
 COPY package.json pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile --config.supply-chain.safety-checks.minimumReleaseAge=0
 
 # Copy mã nguồn và biên dịch production build
 COPY . .

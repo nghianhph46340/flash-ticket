@@ -33,6 +33,7 @@ public class SeatTimeoutSweeper {
      * Tác vụ định kỳ (mỗi 5 giây) quét và thu hồi ghế quá hạn 10 phút
      */
     @Scheduled(fixedDelay = 5000)
+    @Transactional
     public void scheduledSweep() {
         sweepExpiredReservations();
     }
@@ -40,7 +41,6 @@ public class SeatTimeoutSweeper {
     /**
      * Thu hồi ghế quá hạn trên Redis Sorted Set và cập nhật đơn hàng thành EXPIRED trong Postgres
      */
-    @Transactional
     public int sweepExpiredReservations() {
         long currentEpochSeconds = Instant.now().getEpochSecond();
         int recoveredCount = 0;
