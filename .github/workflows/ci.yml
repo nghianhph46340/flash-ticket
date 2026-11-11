@@ -36,7 +36,7 @@ jobs:
         run: |
           cd ticketing-service
           chmod +x mvnw
-          ./mvnw test -B
+          ./mvnw test -B || (echo "=== SUREFIRE TEST REPORTS ===" && cat target/surefire-reports/*.txt && exit 1)
 
       - name: Set up Node.js 20
         uses: actions/setup-node@v4
