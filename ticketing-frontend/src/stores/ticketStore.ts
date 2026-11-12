@@ -1,42 +1,33 @@
 import { defineStore } from 'pinia'
-import { ticketApi } from '../services/api'
+import { cinemaApi, ticketApi } from '../services/api'
 import { stompService } from '../services/websocket'
-import type { EventInfo, OrderPaymentInfo, ReserveTicketResponse, Seat, SeatTier, WebSocketSeatUpdate } from '../types'
-
-export const AVAILABLE_EVENTS: EventInfo[] = [
-  {
-    id: 'flash-concert-2026',
-    title: 'Flash Concert 2026: Neon Symphony',
-    subTitle: 'Đêm diễn âm nhạc điện tử quy mô 20.000 khán giả',
-    venue: 'Sân vận động Quốc gia Mỹ Đình, Hà Nội',
-    date: '20:00 • 15/12/2026',
-    badge: 'HOT FLASH SALE',
-    tagColor: 'from-amber-500 to-rose-600',
-  },
-  {
-    id: 'rock-storm-2026',
-    title: 'Rock Storm Festival: Rực Lửa Đam Mê',
-    subTitle: 'Đại tiệc Rock đỉnh cao quy tụ các ban nhạc huyền thoại',
-    venue: 'Nhà thi đấu Phú Thọ, TP. Hồ Chí Minh',
-    date: '19:30 • 28/12/2026',
-    badge: 'OPENING',
-    tagColor: 'from-rose-600 to-purple-600',
-  },
-  {
-    id: 'tech-summit-2026',
-    title: 'Vietnam Global AI & Tech Summit 2026',
-    subTitle: 'Hội nghị Công nghệ & Trí tuệ Nhân tạo thế hệ mới',
-    venue: 'Trung tâm Hội nghị Quốc gia NCC, Hà Nội',
-    date: '08:30 • 10/01/2027',
-    badge: 'COMING SOON',
-    tagColor: 'from-cyan-500 to-blue-600',
-  },
-]
+import type {
+  CartConcession,
+  Concession,
+  Movie,
+  OrderPaymentInfo,
+  ReserveTicketResponse,
+  Seat,
+  SeatTier,
+  Showtime,
+  WebSocketSeatUpdate,
+} from '../types'
 
 export const useTicketStore = defineStore('ticket', {
   state: () => ({
-    availableEvents: AVAILABLE_EVENTS,
-    eventId: 'flash-concert-2026',
+    // ── Cinema selection ───────────────────────────────────
+    movies: [] as Movie[],
+    selectedMovie: null as Movie | null,
+    showtimes: [] as Showtime[],
+    selectedShowtime: null as Showtime | null,
+    concessions: [] as Concession[],
+    cart: [] as CartConcession[],  // F&B cart
+
+    // ── App flow ───────────────────────────────────────────
+    // MOVIE_SELECT → SHOWTIME_SELECT → SEAT_MAP → CHECKOUT → TICKETS
+    appView: 'MOVIE_SELECT' as 'MOVIE_SELECT' | 'SHOWTIME_SELECT' | 'SEAT_MAP' | 'CHECKOUT' | 'TICKETS',
+
+    // ── Seat map (giữ nguyên) ──────────────────────────────
     userId: 'user-' + Math.random().toString(36).substring(2, 8),
     seats: [] as Seat[],
     selectedSeatIds: [] as string[],
@@ -44,31 +35,34 @@ export const useTicketStore = defineStore('ticket', {
     loading: false,
     errorMessage: null as string | null,
 
-    // Đơn hàng & Thanh toán
+    // ── Order & Payment (giữ nguyên) ───────────────────────
     currentOrder: null as ReserveTicketResponse | null,
     paymentInfo: null as OrderPaymentInfo | null,
     issuedTickets: [] as string[],
-    currentView: 'SEAT_MAP' as 'SEAT_MAP' | 'CHECKOUT' | 'TICKETS',
 
-    // Countdown Timer (10 phút = 600 giây)
+    // ── Countdown Timer ────────────────────────────────────
     remainingSeconds: 600,
-    timerInterval: null as any,
+    timerInterval: null as ReturnType<typeof setInterval> | null,
   }),
 
   getters: {
+    // Seat getters (giữ nguyên)
     selectedSeats(state): Seat[] {
       return state.seats.filter((s) => state.selectedSeatIds.includes(s.id))
     },
-    totalAmount(): number {
+    seatAmount(): number {
       return this.selectedSeats.reduce((sum, s) => sum + s.price, 0)
+    },
+    concessionAmount(state): number {
+      return state.cart.reduce((sum, c) => sum + c.concession.price * c.quantity, 0)
+    },
+    totalAmount(): number {
+      return this.seatAmount + this.concessionAmount
     },
     formattedTime(state): string {
       const mins = Math.floor(state.remainingSeconds / 60)
       const secs = state.remainingSeconds % 60
       return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
-    },
-    currentEvent(state): EventInfo {
-      return state.availableEvents.find((e) => e.id === state.eventId) || state.availableEvents[0]
     },
     availableCount(state): number {
       return state.seats.filter((s) => s.status === 'AVAILABLE').length
@@ -79,54 +73,122 @@ export const useTicketStore = defineStore('ticket', {
     soldCount(state): number {
       return state.seats.filter((s) => s.status === 'SOLD').length
     },
+    // Hiển thị key sự kiện cho Redis (dùng showtimeId hoặc fallback)
+    eventId(state): string {
+      return state.selectedShowtime?.id || 'default-showtime'
+    },
+    // view alias cho backward compat (CheckoutModal & TicketPassModal dùng currentView)
+    currentView(state): string {
+      return state.appView
+    },
   },
 
   actions: {
-    // Chuyển đổi sự kiện & cập nhật WebSocket Realtime
-    async switchEvent(newEventId: string) {
-      if (this.eventId === newEventId) return
-      if (this.timerInterval) {
-        clearInterval(this.timerInterval)
-      }
-      this.eventId = newEventId
-      this.selectedSeatIds = []
-      this.currentOrder = null
-      this.paymentInfo = null
-      this.issuedTickets = []
-      this.currentView = 'SEAT_MAP'
-      this.errorMessage = null
+    // ── Cinema flow ────────────────────────────────────────
 
-      stompService.disconnect()
+    async loadMovies() {
+      this.loading = true
+      this.errorMessage = null
+      try {
+        this.movies = await cinemaApi.getMovies()
+        this.concessions = await cinemaApi.getConcessions()
+      } catch (err: any) {
+        this.errorMessage = 'Không thể tải danh sách phim. Vui lòng thử lại.'
+        console.error(err)
+      } finally {
+        this.loading = false
+      }
+    },
+
+    async selectMovie(movie: Movie) {
+      this.selectedMovie = movie
+      this.appView = 'SHOWTIME_SELECT'
+      this.loading = true
+      try {
+        this.showtimes = await cinemaApi.getShowtimes(movie.id)
+      } catch (err: any) {
+        this.errorMessage = 'Không thể tải lịch chiếu.'
+        console.error(err)
+      } finally {
+        this.loading = false
+      }
+    },
+
+    async selectShowtime(showtime: Showtime) {
+      this.selectedShowtime = showtime
+      this.selectedSeatIds = []
+      this.cart = []
+      this.appView = 'SEAT_MAP'
       await this.initSeats()
       this.initWebSocket()
     },
-    // 1. Khởi tạo danh sách ghế và nạp trạng thái từ Backend Redis
+
+    backToMovies() {
+      stompService.disconnect()
+      this.selectedMovie = null
+      this.selectedShowtime = null
+      this.seats = []
+      this.selectedSeatIds = []
+      this.cart = []
+      this.errorMessage = null
+      this.appView = 'MOVIE_SELECT'
+    },
+
+    backToShowtimes() {
+      stompService.disconnect()
+      this.selectedShowtime = null
+      this.seats = []
+      this.selectedSeatIds = []
+      this.cart = []
+      this.appView = 'SHOWTIME_SELECT'
+    },
+
+    // ── F&B Cart ───────────────────────────────────────────
+
+    addConcession(concession: Concession) {
+      const existing = this.cart.find((c) => c.concession.id === concession.id)
+      if (existing) {
+        existing.quantity++
+      } else {
+        this.cart.push({ concession, quantity: 1 })
+      }
+    },
+
+    removeConcession(concessionId: string) {
+      const idx = this.cart.findIndex((c) => c.concession.id === concessionId)
+      if (idx === -1) return
+      if (this.cart[idx].quantity > 1) {
+        this.cart[idx].quantity--
+      } else {
+        this.cart.splice(idx, 1)
+      }
+    },
+
+    // ── Seat map (giữ nguyên logic) ────────────────────────
+
     async initSeats() {
+      const showtimeId = this.selectedShowtime?.id || 'default-showtime'
+      const basePrice = this.selectedShowtime?.basePrice || 85000
+
       const generatedSeats: Seat[] = []
       const rows = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
 
       for (const row of rows) {
         let tier: SeatTier = 'STANDARD'
-        let price = 250000
+        let price = basePrice
 
         if (row === 'A' || row === 'B') {
           tier = 'VIP'
-          price = 500000
-        } else if (row === 'F' || row === 'G' || row === 'H') {
-          tier = 'ECONOMY'
-          price = 150000
+          price = Math.round(basePrice * 1.5)
+        } else if (row === 'G' || row === 'H') {
+          tier = 'SWEETBOX'
+          price = Math.round(basePrice * 2)
         }
 
-        for (let num = 1; num <= 10; num++) {
+        const seatsInRow = row === 'G' || row === 'H' ? 5 : 10  // Sweetbox ít ghế hơn
+        for (let num = 1; num <= seatsInRow; num++) {
           const id = `${row}${num}`
-          generatedSeats.push({
-            id,
-            row,
-            number: num,
-            tier,
-            price,
-            status: 'AVAILABLE',
-          })
+          generatedSeats.push({ id, row, number: num, tier, price, status: 'AVAILABLE' })
         }
       }
 
@@ -134,183 +196,161 @@ export const useTicketStore = defineStore('ticket', {
 
       try {
         this.loading = true
-        const statuses = await ticketApi.getSeats(this.eventId)
+        const statuses = await ticketApi.getSeats(showtimeId)
         for (const seat of this.seats) {
           const rawStatus = statuses[seat.id]
           if (rawStatus) {
-            if (rawStatus === 'AVAILABLE') {
-              seat.status = 'AVAILABLE'
-            } else if (rawStatus === 'SOLD') {
-              seat.status = 'SOLD'
-            } else if (rawStatus.startsWith('HELD:')) {
+            if (rawStatus === 'SOLD') seat.status = 'SOLD'
+            else if (rawStatus.startsWith('HELD:')) {
               seat.status = 'HELD'
               seat.heldBy = rawStatus.replace('HELD:', '')
             }
           }
         }
       } catch (err: any) {
-        console.error('Failed to load initial seats:', err)
-        this.errorMessage = 'Không thể tải danh sách ghế từ máy chủ.'
+        console.error('Failed to load seat statuses:', err)
       } finally {
         this.loading = false
       }
     },
 
-    // 2. Kết nối STOMP WebSocket
     initWebSocket() {
+      const showtimeId = this.selectedShowtime?.id || 'default-showtime'
       stompService.connect(
-        this.eventId,
-        (update: WebSocketSeatUpdate) => {
-          this.handleWebSocketUpdate(update)
-        },
-        (connected: boolean) => {
-          this.wsConnected = connected
-        }
+        showtimeId,
+        (update: WebSocketSeatUpdate) => { this.handleWebSocketUpdate(update) },
+        (connected: boolean) => { this.wsConnected = connected },
       )
     },
 
-    // 3. Xử lý cập nhật ghế realtime từ WebSocket
     handleWebSocketUpdate(update: WebSocketSeatUpdate) {
-      console.log('[STOMP] Received seat update:', update)
       for (const seatId of update.seatIds) {
         const seat = this.seats.find((s) => s.id === seatId)
-        if (seat) {
-          if (update.status === 'HELD') {
+        if (!seat) continue
+        if (update.status === 'AVAILABLE') {
+          if (seat.status !== 'SELECTED') seat.status = 'AVAILABLE'
+          seat.heldBy = undefined
+        } else if (update.status === 'HELD') {
+          if (!this.selectedSeatIds.includes(seatId)) {
             seat.status = 'HELD'
             seat.heldBy = update.userId
-            // Nếu ghế này đang được người dùng chọn nhưng người khác vừa mua trước
-            if (this.selectedSeatIds.includes(seatId) && update.userId !== this.userId) {
-              this.selectedSeatIds = this.selectedSeatIds.filter((id) => id !== seatId)
-              alert(`Ghế ${seatId} vừa được một khán giả khác giữ trước! Vui lòng chọn ghế khác.`)
-            }
-          } else if (update.status === 'AVAILABLE') {
-            seat.status = 'AVAILABLE'
-            seat.heldBy = undefined
-          } else if (update.status === 'SOLD') {
-            seat.status = 'SOLD'
-            seat.heldBy = undefined
-            this.selectedSeatIds = this.selectedSeatIds.filter((id) => id !== seatId)
           }
+        } else if (update.status === 'SOLD') {
+          seat.status = 'SOLD'
+          this.selectedSeatIds = this.selectedSeatIds.filter((id) => id !== seatId)
         }
       }
     },
 
-    // 4. Chọn hoặc bỏ chọn ghế
     toggleSeat(seatId: string) {
       const seat = this.seats.find((s) => s.id === seatId)
-      if (!seat || seat.status === 'SOLD' || seat.status === 'HELD') {
+      if (!seat || seat.status === 'SOLD' || seat.status === 'HELD' || seat.status === 'BLOCKED') return
+
+      // Sweetbox: chọn 1 → tự động chọn cả 2
+      if (seat.tier === 'SWEETBOX' && seat.pairSeatId) {
+        const pair = this.seats.find((s) => s.id === seat.pairSeatId)
+        if (this.selectedSeatIds.includes(seatId)) {
+          this.selectedSeatIds = this.selectedSeatIds.filter(
+            (id) => id !== seatId && id !== seat.pairSeatId,
+          )
+        } else {
+          if (!this.selectedSeatIds.includes(seatId)) this.selectedSeatIds.push(seatId)
+          if (pair && !this.selectedSeatIds.includes(pair.id)) this.selectedSeatIds.push(pair.id)
+        }
         return
       }
 
       if (this.selectedSeatIds.includes(seatId)) {
         this.selectedSeatIds = this.selectedSeatIds.filter((id) => id !== seatId)
       } else {
-        if (this.selectedSeatIds.length >= 4) {
-          alert('Mỗi giao dịch chỉ được chọn tối đa 4 ghế!')
+        if (this.selectedSeatIds.length >= 8) {
+          this.errorMessage = 'Tối đa 8 ghế mỗi giao dịch.'
+          setTimeout(() => { this.errorMessage = null }, 3000)
           return
         }
         this.selectedSeatIds.push(seatId)
       }
     },
 
-    // 5. Gửi request giữ chỗ nguyên tử (Core Concurrency API)
-    async reserveSeats() {
+    // ── Reservation & Payment (cập nhật dùng mock-confirm) ─
+
+    async reserveAndCheckout() {
       if (this.selectedSeatIds.length === 0) return
-
+      this.loading = true
+      this.errorMessage = null
       try {
-        this.loading = true
-        this.errorMessage = null
-
-        const res = await ticketApi.reserveSeats({
+        const response = await ticketApi.reserveSeats({
           eventId: this.eventId,
           userId: this.userId,
           seatIds: this.selectedSeatIds,
         })
-
-        this.currentOrder = res
-
-        // Lấy thông tin thanh toán VietQR
-        const payInfo = await ticketApi.getPaymentInfo(res.orderCode)
+        this.currentOrder = response
+        const payInfo = await ticketApi.getPaymentInfo(response.orderCode)
         this.paymentInfo = payInfo
-
-        // Bắt đầu đếm ngược 10 phút
-        this.startCountdown(res.expiresAt)
-
-        // Chuyển sang màn hình thanh toán
-        this.currentView = 'CHECKOUT'
+        this.appView = 'CHECKOUT'
+        this.startCountdown(600)
       } catch (err: any) {
-        if (err.response?.status === 409) {
-          const msg = err.response?.data?.message || 'Có ghế vừa bị khán giả khác chọn trước.'
-          alert(`Xung đột giữ chỗ: ${msg}\nVui lòng chọn lại ghế khả dụng!`)
-          await this.initSeats()
-          this.selectedSeatIds = []
-        } else {
-          this.errorMessage = err.response?.data?.message || 'Lỗi hệ thống khi giữ chỗ.'
-        }
+        this.errorMessage = err?.response?.data?.message || 'Không thể giữ chỗ. Vui lòng thử ghế khác.'
       } finally {
         this.loading = false
       }
     },
 
-    // 6. Quản lý đồng hồ đếm ngược 10 phút
-    startCountdown(expiresAtIso: string) {
-      if (this.timerInterval) {
-        clearInterval(this.timerInterval)
-      }
-
-      const targetTime = new Date(expiresAtIso).getTime()
-
-      const updateRemaining = () => {
-        const diff = Math.max(0, Math.floor((targetTime - Date.now()) / 1000))
-        this.remainingSeconds = diff
-
-        if (diff <= 0) {
-          clearInterval(this.timerInterval)
-          alert('Đơn hàng đã hết hạn giữ chỗ (10 phút). Ghế đã được tự động hoàn trả!')
-          this.cancelOrder()
-        }
-      }
-
-      updateRemaining()
-      this.timerInterval = setInterval(updateRemaining, 1000)
-    },
-
-    // 7. Giả lập thanh toán thành công (Test VietQR webhook)
     async simulatePaymentSuccess() {
       if (!this.currentOrder) return
-
+      this.loading = true
       try {
-        this.loading = true
-        const res = await ticketApi.simulatePayment(
+        const result = await ticketApi.mockConfirmPayment(
           this.currentOrder.orderCode,
-          this.paymentInfo?.amount || this.currentOrder.totalAmount
+          this.paymentInfo?.amount || this.totalAmount,
         )
-
-        this.issuedTickets = res.ticketCodes
-        if (this.timerInterval) {
-          clearInterval(this.timerInterval)
+        if (result.status === 'SUCCESS') {
+          this.issuedTickets = result.ticketCodes
+          this.appView = 'TICKETS'
+          this.stopCountdown()
+        } else {
+          this.errorMessage = result.message || 'Thanh toán thất bại.'
         }
-
-        // Chuyển sang màn hình vé điện tử
-        this.currentView = 'TICKETS'
       } catch (err: any) {
-        alert('Lỗi giả lập thanh toán: ' + (err.response?.data?.message || err.message))
+        this.errorMessage = 'Lỗi xác nhận thanh toán.'
+        console.error(err)
       } finally {
         this.loading = false
       }
     },
 
-    // 8. Hủy đơn hàng hoặc quay lại chọn ghế
     cancelOrder() {
-      if (this.timerInterval) {
-        clearInterval(this.timerInterval)
-      }
+      this.stopCountdown()
       this.currentOrder = null
       this.paymentInfo = null
       this.issuedTickets = []
       this.selectedSeatIds = []
-      this.currentView = 'SEAT_MAP'
+      this.cart = []
+      this.appView = 'SEAT_MAP'
       this.initSeats()
+    },
+
+    // ── Timer ──────────────────────────────────────────────
+
+    startCountdown(seconds: number) {
+      this.remainingSeconds = seconds
+      this.stopCountdown()
+      this.timerInterval = setInterval(() => {
+        if (this.remainingSeconds > 0) {
+          this.remainingSeconds--
+        } else {
+          this.stopCountdown()
+          this.cancelOrder()
+          this.errorMessage = 'Phiên đặt vé đã hết hạn. Ghế đã được trả lại.'
+        }
+      }, 1000)
+    },
+
+    stopCountdown() {
+      if (this.timerInterval) {
+        clearInterval(this.timerInterval)
+        this.timerInterval = null
+      }
     },
   },
 })

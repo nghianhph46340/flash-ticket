@@ -23,7 +23,10 @@ const store = useTicketStore()
             </span>
           </div>
           <p class="text-xs text-slate-400 hidden sm:block truncate max-w-md">
-            {{ store.currentEvent.title }} • {{ store.currentEvent.date }}
+            {{ store.selectedMovie?.title || 'Cinema Booking System' }}
+            <span v-if="store.selectedShowtime">
+              · {{ new Date(store.selectedShowtime.startTime).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) }}
+            </span>
           </p>
         </div>
       </div>
