@@ -31,6 +31,12 @@ public class OrderEntity {
     @Column(name = "event_id", nullable = false)
     private UUID eventId;
 
+    @Column(name = "showtime_id")
+    private UUID showtimeId;
+
+    @Column(name = "movie_id")
+    private UUID movieId;
+
     @Column(name = "total_amount", nullable = false, precision = 12, scale = 2)
     private BigDecimal totalAmount;
 

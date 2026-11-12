@@ -55,6 +55,15 @@ server:
     max-connections: 10000
     accept-count: 1000
 
+# Cấu hình Payment Gateway
+# Giá trị: mock (dev/test) | payos (production)
+payment:
+  provider: ${PAYMENT_PROVIDER:mock}
+  payos:
+    client-id: ${PAYOS_CLIENT_ID:}
+    api-key: ${PAYOS_API_KEY:}
+    checksum-key: ${PAYOS_CHECKSUM_KEY:changeme}
+
 logging:
   level:
     root: INFO
