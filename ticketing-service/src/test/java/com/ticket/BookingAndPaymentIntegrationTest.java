@@ -96,10 +96,10 @@ class BookingAndPaymentIntegrationTest {
         assertEquals(OrderStatus.PENDING, savedOrder.getStatus());
         assertEquals(new BigDecimal("500000.00"), savedOrder.getTotalAmount(), "2 vé x 250k = 500k");
 
-        // 4. Lấy thông tin thanh toán VietQR
+        // 4. Lấy thông tin thanh toán (QR từ PaymentGateway — Mock hoặc PayOS tùy config)
         OrderPaymentInfoResponse paymentInfo = paymentService.getPaymentInfo(orderCode);
         assertNotNull(paymentInfo);
-        assertTrue(paymentInfo.getQrImageUrl().contains("vietqr.io"));
+        assertNotNull(paymentInfo.getQrImageUrl(), "QR image URL phải được tạo bởi PaymentGateway");
 
         // 5. Cổng thanh toán gửi Webhook thông báo người dùng đã chuyển khoản thành công
         String idempotencyKey = "TXN-IDEMPOTENT-" + UUID.randomUUID();

@@ -45,6 +45,7 @@ public class OrderEventConsumer {
     private final SeatStatusBroadcaster seatStatusBroadcaster;
     private final ConcessionRepository concessionRepository;
     private final OrderConcessionRepository orderConcessionRepository;
+    private final ShowtimeRepository showtimeRepository;
 
     private Dispatcher dispatcher;
     private JetStreamSubscription subscription;
@@ -136,6 +137,12 @@ public class OrderEventConsumer {
             // Đảm bảo dữ liệu quan hệ (User, Venue, Event, TicketTier) tồn tại trước khi tạo Order
             Prerequisites prereqs = ensurePrerequisites(userUuid, eventUuid);
 
+            // Kiểm tra showtimeId có tồn tại trong bảng showtimes không (tránh FK violation)
+            UUID showtimeId = null;
+            if (showtimeRepository.existsById(eventUuid)) {
+                showtimeId = eventUuid;
+            }
+
             BigDecimal totalAmount = DEFAULT_SEAT_PRICE.multiply(new BigDecimal(event.getSeatIds().size()));
 
             // 2. Ghi bản ghi Order PENDING vào PostgreSQL
@@ -143,7 +150,7 @@ public class OrderEventConsumer {
                     .orderCode(event.getOrderCode())
                     .userId(prereqs.userId)
                     .eventId(prereqs.eventId)
-                    .showtimeId(eventUuid)  // event.getEventId() thực chất là showtimeId từ frontend
+                    .showtimeId(showtimeId)  // Chỉ set khi showtime thực sự tồn tại
                     .totalAmount(totalAmount)
                     .status(OrderStatus.PENDING)
                     .expiresAt(event.getExpiresAt())
