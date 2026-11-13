@@ -15,13 +15,16 @@ local expireTime = tonumber(ARGV[2])
 
 -- 1. KIỂM TRA ĐIỀU KIỆN (All-or-Nothing Validation)
 -- Duyệt qua toàn bộ danh sách ghế yêu cầu. Nếu có ít nhất 1 ghế không ở trạng thái AVAILABLE thì từ chối ngay.
+-- Lưu ý: nil (ghế chưa được set trong Redis) được coi là AVAILABLE — không yêu cầu pre-warm.
 for i = 3, #ARGV do
     local seatId = ARGV[i]
     local currentStatus = redis.call('HGET', seatHashKey, seatId)
     
-    if currentStatus ~= 'AVAILABLE' then
+    -- nil = chưa ai đặt bao giờ → AVAILABLE
+    -- 'AVAILABLE' = đã được set tường minh → AVAILABLE
+    -- Bất kỳ giá trị khác (HELD:xxx, SOLD) → từ chối
+    if currentStatus ~= false and currentStatus ~= 'AVAILABLE' then
         -- Ghế không khả dụng (đã bị HELD bởi người khác, hoặc SOLD)
-        -- Trả về: {0, seatId_bi_trung}
         return {0, seatId}
     end
 end

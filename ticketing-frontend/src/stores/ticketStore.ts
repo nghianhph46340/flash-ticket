@@ -170,6 +170,7 @@ export const useTicketStore = defineStore('ticket', {
       const showtimeId = this.selectedShowtime?.id || 'default-showtime'
       const basePrice = this.selectedShowtime?.basePrice || 85000
 
+      // Sinh danh sách ghế vật lý
       const generatedSeats: Seat[] = []
       const rows = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
 
@@ -185,19 +186,19 @@ export const useTicketStore = defineStore('ticket', {
           price = Math.round(basePrice * 2)
         }
 
-        const seatsInRow = row === 'G' || row === 'H' ? 5 : 10  // Sweetbox ít ghế hơn
+        const seatsInRow = row === 'G' || row === 'H' ? 5 : 10
         for (let num = 1; num <= seatsInRow; num++) {
           const id = `${row}${num}`
           generatedSeats.push({ id, row, number: num, tier, price, status: 'AVAILABLE' })
         }
       }
 
-      this.seats = generatedSeats
-
+      // Fetch trạng thái thực tế từ Redis TRƯỚC khi hiển thị
+      // Tránh tình trạng user thấy ghế AVAILABLE trong khi Redis đã SOLD
+      this.loading = true
       try {
-        this.loading = true
         const statuses = await ticketApi.getSeats(showtimeId)
-        for (const seat of this.seats) {
+        for (const seat of generatedSeats) {
           const rawStatus = statuses[seat.id]
           if (rawStatus) {
             if (rawStatus === 'SOLD') seat.status = 'SOLD'
@@ -209,9 +210,11 @@ export const useTicketStore = defineStore('ticket', {
         }
       } catch (err: any) {
         console.error('Failed to load seat statuses:', err)
-      } finally {
-        this.loading = false
       }
+
+      // Chỉ gán vào store SAU khi đã có status chính xác
+      this.seats = generatedSeats
+      this.loading = false
     },
 
     initWebSocket() {
@@ -327,7 +330,23 @@ export const useTicketStore = defineStore('ticket', {
       this.selectedSeatIds = []
       this.cart = []
       this.appView = 'SEAT_MAP'
-      this.initSeats()
+      // Reconnect WebSocket để nhận broadcast realtime sau khi quay lại
+      stompService.disconnect()
+      this.initSeats().then(() => this.initWebSocket())
+    },
+
+    // Đặt vé mới sau khi đã thanh toán xong (từ TicketPassModal)
+    bookAnother() {
+      this.stopCountdown()
+      this.currentOrder = null
+      this.paymentInfo = null
+      this.issuedTickets = []
+      this.selectedSeatIds = []
+      this.cart = []
+      this.appView = 'SEAT_MAP'
+      // Reconnect WebSocket và reload trạng thái ghế mới nhất
+      stompService.disconnect()
+      this.initSeats().then(() => this.initWebSocket())
     },
 
     // ── Timer ──────────────────────────────────────────────
