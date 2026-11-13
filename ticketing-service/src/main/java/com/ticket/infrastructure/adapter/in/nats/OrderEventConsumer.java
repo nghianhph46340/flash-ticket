@@ -24,6 +24,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @Slf4j
@@ -42,6 +43,8 @@ public class OrderEventConsumer {
     private final VenueRepository venueRepository;
     private final TicketTierRepository ticketTierRepository;
     private final SeatStatusBroadcaster seatStatusBroadcaster;
+    private final ConcessionRepository concessionRepository;
+    private final OrderConcessionRepository orderConcessionRepository;
 
     private Dispatcher dispatcher;
     private JetStreamSubscription subscription;
@@ -140,6 +143,7 @@ public class OrderEventConsumer {
                     .orderCode(event.getOrderCode())
                     .userId(prereqs.userId)
                     .eventId(prereqs.eventId)
+                    .showtimeId(eventUuid)  // event.getEventId() thực chất là showtimeId từ frontend
                     .totalAmount(totalAmount)
                     .status(OrderStatus.PENDING)
                     .expiresAt(event.getExpiresAt())
@@ -199,6 +203,38 @@ public class OrderEventConsumer {
             }
 
             orderItemRepository.saveAll(items);
+
+            // 3b. Lưu bắp nước F&B vào order_concessions và cộng vào totalAmount
+            BigDecimal concessionTotal = BigDecimal.ZERO;
+            if (event.getConcessions() != null && !event.getConcessions().isEmpty()) {
+                List<OrderConcessionEntity> concessionEntities = new ArrayList<>();
+                for (Map.Entry<String, Integer> entry : event.getConcessions().entrySet()) {
+                    try {
+                        UUID concessionId = UUID.fromString(entry.getKey());
+                        ConcessionEntity concession = concessionRepository.findById(concessionId).orElse(null);
+                        if (concession != null && concession.isActive()) {
+                            BigDecimal lineTotal = concession.getPrice().multiply(new BigDecimal(entry.getValue()));
+                            concessionTotal = concessionTotal.add(lineTotal);
+                            concessionEntities.add(OrderConcessionEntity.builder()
+                                    .orderId(savedOrder.getId())
+                                    .concessionId(concessionId)
+                                    .quantity(entry.getValue())
+                                    .unitPrice(concession.getPrice())
+                                    .build());
+                        }
+                    } catch (IllegalArgumentException ignored) {
+                        log.warn("Invalid concession ID: {}", entry.getKey());
+                    }
+                }
+                if (!concessionEntities.isEmpty()) {
+                    orderConcessionRepository.saveAll(concessionEntities);
+                    // Cập nhật totalAmount bao gồm cả F&B
+                    savedOrder.setTotalAmount(totalAmount.add(concessionTotal));
+                    orderRepository.save(savedOrder);
+                    log.info("Added {} concession items (+{} VND) to order {}",
+                            concessionEntities.size(), concessionTotal, event.getOrderCode());
+                }
+            }
 
             // 4. Xác nhận đã xử lý xong thông điệp cho NATS Broker
             msg.ack();

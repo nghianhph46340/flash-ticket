@@ -11,7 +11,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
+import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -20,6 +23,7 @@ public class TicketReservationService {
 
     private final RedisSeatCacheService redisSeatCacheService;
     private final NatsTicketEventPublisher natsTicketEventPublisher;
+    private final OrphanSeatValidator orphanSeatValidator;
 
     private static final long HOLD_DURATION_SECONDS = 600; // 10 phút giữ chỗ
 
@@ -32,6 +36,19 @@ public class TicketReservationService {
         long expireEpochSeconds = expiresAt.getEpochSecond();
 
         String orderCode = "ORD-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12).toUpperCase();
+
+        // 0. Kiểm tra quy tắc chống ghế lẻ (Orphan Seat Prevention)
+        Map<String, String> seatStatuses = redisSeatCacheService.getAllSeatStatuses(request.getEventId())
+                .entrySet().stream()
+                .collect(Collectors.toMap(
+                        e -> e.getKey().toString(),
+                        e -> e.getValue().toString()
+                ));
+        Optional<OrphanSeatValidator.OrphanViolationResult> orphanViolation =
+                orphanSeatValidator.validateRequest(seatStatuses, request.getSeatIds());
+        if (orphanViolation.isPresent()) {
+            throw new SeatUnavailableException(orphanViolation.get().message());
+        }
 
         // 1. Thực thi Redis Lua Script kiểm tra và khóa ghế nguyên tử
         RedisSeatCacheService.ReservationResult result = redisSeatCacheService.reserveSeats(
@@ -46,6 +63,15 @@ public class TicketReservationService {
         }
 
         // 2. Tạo Event và phát tán sang NATS JetStream với Deduplication Header
+        Map<String, Integer> concessionMap = null;
+        if (request.getConcessions() != null && !request.getConcessions().isEmpty()) {
+            concessionMap = request.getConcessions().stream()
+                    .collect(Collectors.toMap(
+                            ReserveTicketRequest.ConcessionItem::getConcessionId,
+                            ReserveTicketRequest.ConcessionItem::getQuantity
+                    ));
+        }
+
         TicketReservedEvent event = TicketReservedEvent.builder()
                 .orderCode(orderCode)
                 .eventId(request.getEventId())
@@ -53,6 +79,7 @@ public class TicketReservationService {
                 .seatIds(request.getSeatIds())
                 .expiresAt(expiresAt)
                 .createdAt(now)
+                .concessions(concessionMap)
                 .build();
 
         try {

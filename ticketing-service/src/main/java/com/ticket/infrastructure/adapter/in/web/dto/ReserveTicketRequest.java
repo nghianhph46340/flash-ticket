@@ -23,6 +23,18 @@ public class ReserveTicketRequest {
     private String userId;
 
     @NotEmpty(message = "seatIds cannot be empty")
-    @Size(min = 1, max = 4, message = "You can reserve maximum 4 seats per order")
+    @Size(min = 1, max = 8, message = "You can reserve maximum 8 seats per order")
     private List<String> seatIds;
+
+    // Danh sách bắp nước F&B đi kèm đơn hàng (tùy chọn)
+    private List<ConcessionItem> concessions;
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class ConcessionItem {
+        private String concessionId;
+        private int quantity;
+    }
 }

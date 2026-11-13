@@ -59,3 +59,26 @@ export const ticketApi = {
     return res.data
   },
 }
+
+// ── Check-in API ───────────────────────────────────────────────
+export interface CheckInResponse {
+  success: boolean
+  ticketCode: string
+  seatNum?: string
+  movieTitle?: string
+  showtimeStart?: string
+  auditoriumName?: string
+  status?: string
+  checkinTime?: string
+  message: string
+}
+
+export const checkInApi = {
+  async checkIn(ticketCode: string, qrHash: string): Promise<CheckInResponse> {
+    const res = await apiClient.post<CheckInResponse>('/tickets/checkin', {
+      ticketCode,
+      qrHash,
+    })
+    return res.data
+  },
+}

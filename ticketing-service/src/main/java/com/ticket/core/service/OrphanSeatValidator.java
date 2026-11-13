@@ -137,38 +137,38 @@ public class OrphanSeatValidator {
     /**
      * Kiểm tra toàn bộ request (có thể chọn nhiều ghế ở nhiều hàng khác nhau).
      *
-     * @param showtimeSeatMap Map<"rowLabel-seatNumber", status> của toàn bộ showtime
-     * @param requestedSeatKeys Danh sách key ghế được chọn (format: "A-1", "A-2", "B-5"...)
+     * @param showtimeSeatMap Map<"seatId", status> của toàn bộ showtime.
+     *                        seatId format: "A1", "B12", "G5" (row + seatNum liền nhau)
+     * @param requestedSeatKeys Danh sách seatId được chọn (format: "A1", "B2"...)
      * @return Thông tin vi phạm nếu có
      */
     public Optional<OrphanViolationResult> validateRequest(
             Map<String, String> showtimeSeatMap,
             List<String> requestedSeatKeys) {
 
-        // Group ghế theo hàng
+        // Group ghế theo hàng — seatId format: "A1", "B12", "G5"
         Map<String, Map<Integer, String>> seatsByRow = new LinkedHashMap<>();
         for (Map.Entry<String, String> entry : showtimeSeatMap.entrySet()) {
-            String[] parts = entry.getKey().split("-", 2);
-            if (parts.length == 2) {
-                String row = parts[0];
+            String key = entry.getKey();
+            // Tách row (chữ cái đầu) và seatNum (phần số) từ "A1" → row="A", seatNum=1
+            if (key.length() >= 2) {
+                String row = key.substring(0, 1);
                 try {
-                    int seatNum = Integer.parseInt(parts[1]);
+                    int seatNum = Integer.parseInt(key.substring(1));
                     seatsByRow.computeIfAbsent(row, k -> new TreeMap<>())
                             .put(seatNum, entry.getValue());
-                } catch (NumberFormatException ignored) {
-                    // Bỏ qua key không đúng format
-                }
+                } catch (NumberFormatException ignored) {}
             }
         }
 
         // Group ghế được chọn theo hàng
         Map<String, Set<Integer>> requestedByRow = new LinkedHashMap<>();
         for (String key : requestedSeatKeys) {
-            String[] parts = key.split("-", 2);
-            if (parts.length == 2) {
+            if (key.length() >= 2) {
+                String row = key.substring(0, 1);
                 try {
-                    int seatNum = Integer.parseInt(parts[1]);
-                    requestedByRow.computeIfAbsent(parts[0], k -> new HashSet<>()).add(seatNum);
+                    int seatNum = Integer.parseInt(key.substring(1));
+                    requestedByRow.computeIfAbsent(row, k -> new HashSet<>()).add(seatNum);
                 } catch (NumberFormatException ignored) {}
             }
         }
@@ -184,7 +184,7 @@ public class OrphanSeatValidator {
                 return Optional.of(new OrphanViolationResult(
                         row,
                         violation.get(),
-                        String.format("Chọn ghế ở hàng %s sẽ để lại ghế %s-%d đơn độc không thể bán cho người khác",
+                        String.format("Chọn ghế ở hàng %s sẽ để lại ghế %s%d đơn độc không thể bán cho người khác",
                                 row, row, violation.get())
                 ));
             }

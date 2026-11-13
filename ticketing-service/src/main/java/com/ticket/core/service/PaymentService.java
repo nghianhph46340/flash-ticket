@@ -4,6 +4,7 @@ import com.ticket.core.domain.model.enums.OrderStatus;
 import com.ticket.core.domain.model.enums.PaymentStatus;
 import com.ticket.core.domain.model.enums.SeatStatus;
 import com.ticket.core.domain.model.enums.TicketStatus;
+import com.ticket.core.port.out.PaymentGateway;
 import com.ticket.infrastructure.adapter.in.web.dto.OrderPaymentInfoResponse;
 import com.ticket.infrastructure.adapter.in.web.dto.PaymentWebhookRequest;
 import com.ticket.infrastructure.adapter.in.web.dto.PaymentWebhookResponse;
@@ -37,6 +38,7 @@ public class PaymentService {
     private final TicketRepository ticketRepository;
     private final StringRedisTemplate stringRedisTemplate;
     private final SeatStatusBroadcaster seatStatusBroadcaster;
+    private final PaymentGateway paymentGateway;
 
     private static final String BANK_ID = "MB";
     private static final String ACCOUNT_NO = "8888999966";
@@ -176,12 +178,15 @@ public class PaymentService {
                 .orElseThrow(() -> new IllegalArgumentException("Order not found: " + orderCode));
 
         List<OrderItemEntity> items = orderItemRepository.findByOrderId(order.getId());
-        List<String> seatIds = items.stream().map(i -> i.getSeatId().toString()).toList();
+        List<String> seatIds = items.stream()
+                .map(i -> seatRepository.findById(i.getSeatId())
+                        .map(SeatEntity::getSeatNum)
+                        .orElse(i.getSeatId().toString()))
+                .toList();
 
-        // Tạo link ảnh VietQR động chuẩn NAPAS 24/7
-        String qrImageUrl = String.format(
-                "https://img.vietqr.io/image/%s-%s-compact2.png?amount=%s&addInfo=%s&accountName=%s",
-                BANK_ID, ACCOUNT_NO, order.getTotalAmount().toPlainString(), order.getOrderCode(), ACCOUNT_NAME.replace(" ", "%20")
+        // Tạo thông tin thanh toán qua PaymentGateway
+        PaymentGateway.PaymentInitResult payResult = paymentGateway.createPayment(
+                order.getOrderCode(), order.getTotalAmount(), "FlashTicket " + order.getOrderCode()
         );
 
         return OrderPaymentInfoResponse.builder()
@@ -191,10 +196,10 @@ public class PaymentService {
                 .status(order.getStatus().name())
                 .expiresAt(order.getExpiresAt())
                 .seatIds(seatIds)
-                .bankName(BANK_ID)
-                .accountNumber(ACCOUNT_NO)
-                .accountName(ACCOUNT_NAME)
-                .qrImageUrl(qrImageUrl)
+                .bankName(payResult.bankName())
+                .accountNumber(payResult.accountNumber())
+                .accountName(payResult.accountName())
+                .qrImageUrl(payResult.qrImageUrl())
                 .build();
     }
 

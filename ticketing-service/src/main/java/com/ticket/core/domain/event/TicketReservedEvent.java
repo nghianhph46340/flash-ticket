@@ -7,6 +7,7 @@ import lombok.NoArgsConstructor;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 
 @Data
 @Builder
@@ -19,4 +20,7 @@ public class TicketReservedEvent {
     private List<String> seatIds;
     private Instant expiresAt;
     private Instant createdAt;
+
+    // Danh sách bắp nước F&B: Map<concessionId, quantity>
+    private Map<String, Integer> concessions;
 }

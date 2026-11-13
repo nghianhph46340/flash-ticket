@@ -62,6 +62,12 @@ export interface ReserveTicketRequest {
   eventId: string
   userId: string
   seatIds: string[]
+  concessions?: ConcessionItem[]
+}
+
+export interface ConcessionItem {
+  concessionId: string
+  quantity: number
 }
 
 export interface ReserveTicketResponse {

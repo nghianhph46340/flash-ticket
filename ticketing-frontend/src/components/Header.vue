@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useTicketStore } from '../stores/ticketStore'
 import { ShieldCheck, Ticket } from 'lucide-vue-next'
+import CheckInModal from './CheckInModal.vue'
 
 const store = useTicketStore()
 </script>
@@ -32,7 +33,10 @@ const store = useTicketStore()
       </div>
 
       <!-- Live Indicators -->
-      <div class="flex items-center gap-4">
+      <div class="flex items-center gap-3">
+        <!-- Check-in Button -->
+        <CheckInModal />
+
         <!-- WebSocket STOMP Badge -->
         <div class="flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-800/80 border border-slate-700/60 text-xs">
           <span class="relative flex h-2 w-2">

@@ -286,6 +286,10 @@ export const useTicketStore = defineStore('ticket', {
           eventId: this.eventId,
           userId: this.userId,
           seatIds: this.selectedSeatIds,
+          concessions: this.cart.map(c => ({
+            concessionId: c.concession.id,
+            quantity: c.quantity,
+          })),
         })
         this.currentOrder = response
         const payInfo = await ticketApi.getPaymentInfo(response.orderCode)
